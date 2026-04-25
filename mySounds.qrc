@@ -1,0 +1,7 @@
+<RCC>
+    <qresource prefix="/sounds">
+        <file>btn09.mp3</file>
+        <file>btn15.mp3</file>
+        <file>MusMus-BGM-186.mp3</file>
+    </qresource>
+</RCC>
