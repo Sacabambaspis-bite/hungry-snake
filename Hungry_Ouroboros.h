@@ -8,9 +8,9 @@
 #include <QTimer>
 #include <QRect>
 #include <QVector>
-#include <QSoundEffect>      // 新增：用于播放短音效
-#include <QMediaPlayer>      // 新增：用于播放背景音乐
-#include <QAudioOutput>      // 新增：QMediaPlayer 的音频输出（Qt6 必需）
+#include <QSoundEffect>
+#include <QMediaPlayer>
+#include <QAudioOutput>
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -30,20 +30,21 @@ protected:
     void mousePressEvent(QMouseEvent *event) override;
 
 private slots:
-    void onGameUpdate();   // 原 mainwindow_update 重命名
+    void onGameUpdate();
 
 private:
     Ui::MainWindow *ui;
 
     // 游戏状态
-    bool blsrun;           // 是否已完成初始化
-    bool blsover;          // 游戏是否结束
-    bool isStart;          // 游戏是否正在运行（蛇在移动）
-    bool m_inWelcomeScreen;// 是否显示欢迎界面
+    bool blsrun;
+    bool blsover;
+    bool isStart;
+    bool m_inWelcomeScreen;
+    bool m_isHardMode;
 
     // 游戏数据
-    int speed;             // 计时器间隔（毫秒）
-    int nDirection;        // 1:上 2:下 3:左 4:右
+    int speed;
+    int nDirection;
     int nScore;
     QString sDisplay;
     QString ScoreLabel;
@@ -51,23 +52,31 @@ private:
     QRect food;
     QRect SnakeHead;
     QVector<QRect> vSnakeRect;
+    QVector<QRect> m_obstacles;
 
     QTimer *timer;
 
     // 欢迎界面按钮区域
-    QRect m_yesButtonRect;
-    QRect m_noButtonRect;
+    QRect m_normalBtnRect;
+    QRect m_hardBtnRect;
+    QRect m_exitBtnRect;
 
-    // 初始化函数
+    // 游戏结束菜单按钮区域
+    QRect m_restartBtnRect;      // “再来一局”按钮
+    QRect m_backToMenuBtnRect;   // “返回主菜单”按钮
+
+    // 初始化与辅助函数
     void InitSnake();
     QRect CreatRect();
     void IsEat();
     void IsHit();
+    void GenerateObstacles();
+    void StartGame();
 
-    // 音效相关成员
-    QMediaPlayer *m_eatPlayer;        // 吃食物音效播放器
-    QMediaPlayer *m_gameoverPlayer;   // 游戏结束音效播放器
-    QMediaPlayer *m_bgmPlayer;        // 背景音乐播放器
+    // 音效播放器
+    QMediaPlayer *m_eatPlayer;
+    QMediaPlayer *m_gameoverPlayer;
+    QMediaPlayer *m_bgmPlayer;
 };
 
 #endif // HUNGRY_OUROBOROS_H
