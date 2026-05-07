@@ -2,15 +2,15 @@
 #define HUNGRY_OUROBOROS_H
 
 #include <QMainWindow>
-#include <QPainter>
-#include <QKeyEvent>
-#include <QMouseEvent>
 #include <QTimer>
-#include <QRect>
 #include <QVector>
-#include <QSoundEffect>
+#include <QRect>
 #include <QMediaPlayer>
 #include <QAudioOutput>
+#include <QKeyEvent>
+#include <QMouseEvent>
+#include <QPaintEvent>
+#include <QPainter>
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -26,57 +26,61 @@ public:
 
 protected:
     void paintEvent(QPaintEvent *event) override;
-    void keyPressEvent(QKeyEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
+    void keyPressEvent(QKeyEvent *event) override;
 
 private slots:
     void onGameUpdate();
+    void moveFood();            // 食物移动槽函数
 
 private:
     Ui::MainWindow *ui;
-
-    // 游戏状态
+    QTimer *timer;
+    QVector<QRect> vSnakeRect;
+    QPixmap m_snakeBodyPixmap;
+    QRect food;
     bool blsrun;
-    bool blsover;
-    bool isStart;
-    bool m_inWelcomeScreen;
-    bool m_isHardMode;
-
-    // 游戏数据
     int speed;
-    int nDirection;
-    int nScore;
+    bool isStart;
+    bool blsover;
     QString sDisplay;
     QString ScoreLabel;
-
-    QRect food;
+    int nScore;
+    int nDirection;
     QRect SnakeHead;
-    QVector<QRect> vSnakeRect;
-    QVector<QRect> m_obstacles;
 
-    QTimer *timer;
-
-    // 欢迎界面按钮区域
-    QRect m_normalBtnRect;
-    QRect m_hardBtnRect;
-    QRect m_exitBtnRect;
-
-    // 游戏结束菜单按钮区域
-    QRect m_restartBtnRect;      // “再来一局”按钮
-    QRect m_backToMenuBtnRect;   // “返回主菜单”按钮
-
-    // 初始化与辅助函数
-    void InitSnake();
-    QRect CreatRect();
-    void IsEat();
-    void IsHit();
-    void GenerateObstacles();
-    void StartGame();
-
-    // 音效播放器
+    // 音效
     QMediaPlayer *m_eatPlayer;
     QMediaPlayer *m_gameoverPlayer;
     QMediaPlayer *m_bgmPlayer;
+
+    // 界面状态
+    bool m_inWelcomeScreen;
+    bool m_isHardMode;
+    QRect m_normalBtnRect;
+    QRect m_hardBtnRect;
+    QRect m_exitBtnRect;
+    QRect m_restartBtnRect;
+    QRect m_backToMenuBtnRect;
+
+    // 障碍物
+    QVector<QRect> m_obstacles;
+
+    // 最高分
+    int m_normalHighScore;
+    int m_hardHighScore;
+
+    // 食物移动相关
+    bool m_foodMoveEnabled;
+    QTimer *m_foodMoveTimer;
+    int m_foodMoveInterval;
+
+    void InitSnake();
+    QRect CreatRect();
+    void GenerateObstacles();
+    void eatFood();
+    void StartGame();
+    void updateHighScore();
 };
 
 #endif // HUNGRY_OUROBOROS_H

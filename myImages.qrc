@@ -2,5 +2,6 @@
     <qresource prefix="/myImages">
         <file>bg.png</file>
         <file>fd.png</file>
+        <file>bd.jpg</file>
     </qresource>
 </RCC>
