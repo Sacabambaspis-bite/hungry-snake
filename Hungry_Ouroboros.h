@@ -11,6 +11,9 @@
 #include <QMouseEvent>
 #include <QPaintEvent>
 #include <QPainter>
+#include <QTime>
+#include <QPointF>
+#include <cmath>
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -32,6 +35,7 @@ protected:
 private slots:
     void onGameUpdate();
     void moveFood();            // 食物移动槽函数
+    void updateAnimation();             // 更新动画进度
 
 private:
     Ui::MainWindow *ui;
@@ -48,6 +52,21 @@ private:
     int nScore;
     int nDirection;
     QRect SnakeHead;
+    bool m_paused;   // 暂停标志
+    // 平滑动画相关
+    QTime m_lastMoveTime;
+    QVector<QPointF> m_prevPositions;
+    QVector<QPointF> m_currPositions;
+    float m_animProgress;
+    bool m_isMoving;
+    QTimer *m_animationTimer;
+    double m_flashPhase;
+    // 食物平滑移动
+    bool m_foodMoving;
+    QPointF m_foodPrevPos;
+    QPointF m_foodCurrPos;
+    float m_foodAnimProgress;
+    QTime m_foodMoveStartTime;
 
     // 音效
     QMediaPlayer *m_eatPlayer;
@@ -81,6 +100,7 @@ private:
     void eatFood();
     void StartGame();
     void updateHighScore();
+    QPointF getAnimatedPosition(int index) const;   // 获取插值后的坐标
 };
 
 #endif // HUNGRY_OUROBOROS_H

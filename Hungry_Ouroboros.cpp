@@ -24,6 +24,12 @@ MainWindow::MainWindow(QWidget *parent)
     , m_foodMoveEnabled(false)
     , m_foodMoveTimer(nullptr)
     , m_foodMoveInterval(600)
+    , m_animProgress(0.0f)
+    , m_isMoving(false)
+    , m_animationTimer(nullptr)
+    , m_flashPhase(0.0)
+    , m_foodMoving(false)
+    , m_foodAnimProgress(0.0f)
 {
     ui->setupUi(this);
     this->setGeometry(QRect(500, 250, 500, 520));
@@ -51,6 +57,11 @@ MainWindow::MainWindow(QWidget *parent)
     m_bgmPlayer->setSource(QUrl("qrc:/sounds/MusMus-BGM-186.mp3"));
     m_bgmPlayer->setLoops(QMediaPlayer::Infinite);
 
+    // 创建动画计时器（每 16ms 一帧，约 60fps）
+    m_animationTimer = new QTimer(this);
+    connect(m_animationTimer, &QTimer::timeout, this, &MainWindow::updateAnimation);
+    m_animationTimer->start(16);
+
     // 读取保存的最高分
     QSettings settings("MyCompany", "HungryOuroboros");
     m_normalHighScore = settings.value("NormalHighScore", 0).toInt();
@@ -62,6 +73,10 @@ MainWindow::~MainWindow()
     if (m_foodMoveTimer) {
         m_foodMoveTimer->stop();
         delete m_foodMoveTimer;
+    }
+    if (m_animationTimer) {
+        m_animationTimer->stop();
+        delete m_animationTimer;
     }
     delete ui;
 }
@@ -149,26 +164,95 @@ void MainWindow::paintEvent(QPaintEvent *event)
     painter.drawPixmap(20, 20, 460, 460, QPixmap(":/myImages/bg.png"));
 
     // 网格线
-    painter.setPen(Qt::darkGray);
-    for (int i = 2; i <= 47; i++) {
-        painter.drawLine(20, i * 10, 480, i * 10);
-        painter.drawLine(i * 10, 20, i * 10, 480);
+
+
+    // 网格线（仅普通模式显示）
+    if (!m_isHardMode) {
+        painter.setPen(Qt::darkGray);
+        for (int i = 2; i <= 47; i++) {
+            painter.drawLine(20, i * 10, 480, i * 10);
+            painter.drawLine(i * 10, 20, i * 10, 480);
+        }
     }
 
     // 障碍物（困难模式）
     if (m_isHardMode) {
-        painter.setBrush(QColor(139, 69, 19));
-        painter.setPen(Qt::darkYellow);
+        painter.setPen(Qt::darkYellow);  // 边框颜色
         for (const QRect &obs : m_obstacles) {
-            painter.drawRect(obs);
+            // 渐变填充：左上角亮棕，右下角色暗棕
+            QLinearGradient gradient(obs.topLeft(), obs.bottomRight());
+            gradient.setColorAt(0, QColor(180, 100, 50));
+            gradient.setColorAt(1, QColor(100, 60, 30));
+            painter.setBrush(gradient);
+            painter.drawRoundedRect(obs, 3, 3);
         }
     }
 
     // 蛇和食物
     painter.setPen(Qt::lightGray);
     painter.setBrush(Qt::white);
-    painter.drawRects(&vSnakeRect[0], vSnakeRect.size());
-    painter.drawPixmap(food, QPixmap(":/myImages/fd.png"));
+    // 绘制蛇身（白色渐变）
+    painter.setPen(Qt::lightGray);
+    for (int i = 1; i < vSnakeRect.size(); ++i) {
+        QPointF pos = getAnimatedPosition(i);
+        QRect rect(pos.x(), pos.y(), 10, 10);
+        QLinearGradient gradient(rect.topLeft(), rect.bottomRight());
+        gradient.setColorAt(0, QColor(255, 255, 255));
+        gradient.setColorAt(1, QColor(200, 200, 200));
+        painter.setBrush(gradient);
+        painter.drawRoundedRect(rect, 2, 2);
+        painter.setBrush(QColor(255, 255, 255, 100));
+        painter.setPen(Qt::NoPen);
+        painter.drawRoundedRect(rect.x(), rect.y(), 4, 3, 1, 1);
+    }
+
+    // 绘制蛇头（浅灰色渐变）
+    if (!vSnakeRect.isEmpty()) {
+        QPointF headPos = getAnimatedPosition(0);
+        QRect headRect(headPos.x(), headPos.y(), 10, 10);
+        QLinearGradient headGrad(headRect.topLeft(), headRect.bottomRight());
+        headGrad.setColorAt(0, QColor(210, 210, 210));
+        headGrad.setColorAt(1, QColor(150, 150, 150));
+        painter.setBrush(headGrad);
+        painter.drawRoundedRect(headRect, 2, 2);
+        painter.setBrush(Qt::darkGray);
+        painter.drawEllipse(headRect.x() + 2, headRect.y() + 2, 3, 3);
+        painter.drawEllipse(headRect.x() + 6, headRect.y() + 2, 3, 3);
+    }
+
+    // 食物绘制
+    // 计算当前要绘制的位置（插值或逻辑位置）
+    QPointF drawPos;
+    if (m_foodMoving) {
+        float t = m_foodAnimProgress;
+        drawPos = m_foodPrevPos + (m_foodCurrPos - m_foodPrevPos) * t;
+    } else {
+        drawPos = QPointF(food.x(), food.y());
+    }
+
+    // 食物闪烁效果（原有的透明度计算）
+    painter.save();
+    double opacity = 0.7 + 0.3 * (1.0 + sin(m_flashPhase)) / 2.0;
+    painter.setOpacity(opacity);
+    painter.drawPixmap(QRect(drawPos.x(), drawPos.y(), 10, 10), QPixmap(":/myImages/fd.png"));
+    painter.restore();
+
+    // 暂停文字
+    if (m_paused && !blsover && !m_inWelcomeScreen) {
+        QFont pauseFont("Arial", 24, QFont::Bold);
+        painter.setFont(pauseFont);
+        painter.setPen(Qt::white);
+        painter.setBrush(Qt::black);
+        QString pauseText = "暂停";
+        QFontMetrics fm(pauseFont);
+        int textWidth = fm.horizontalAdvance(pauseText);
+        QRect gameArea(20, 20, 460, 460);
+        int x = gameArea.center().x() - textWidth / 2;
+        int y = gameArea.center().y() + 15;
+        // 增加半透明背景框，使文字更清晰
+        painter.fillRect(x - 10, y - fm.height() - 5, textWidth + 20, fm.height() + 10, QColor(0,0,0,180));
+        painter.drawText(x, y, pauseText);
+    }
 
     // 得分文字
     QFont font2("Arial", 10);
@@ -289,6 +373,7 @@ void MainWindow::mousePressEvent(QMouseEvent *event)
                 delete m_foodMoveTimer;
                 m_foodMoveTimer = nullptr;
             }
+            if (m_animationTimer) m_animationTimer->stop();
             m_inWelcomeScreen = true;
             blsrun = false;
             blsover = false;
@@ -306,15 +391,23 @@ void MainWindow::mousePressEvent(QMouseEvent *event)
 
 void MainWindow::StartGame()
 {
+    m_foodMoving = false;
     m_inWelcomeScreen = false;
+    m_paused = false;
     InitSnake();
     isStart = true;
     nDirection = 2;
     timer->start(speed);
     sDisplay = " ";
+    m_isMoving = false;
+    m_animProgress = 0.0f;
 
     // 重置食物移动速度
-    m_foodMoveInterval = 600;
+    if (m_isHardMode) {
+        m_foodMoveInterval = 400;
+    } else {
+        m_foodMoveInterval = 600;
+    }
 
     // 创建食物移动计时器（两种模式都启用移动）
     if (m_foodMoveTimer) {
@@ -336,6 +429,7 @@ void MainWindow::InitSnake()
     blsrun = true;
     blsover = false;
     isStart = false;
+    m_paused = false;
     nDirection = 2;
     sDisplay = "游戏开始";
     ScoreLabel = "得分：";
@@ -397,7 +491,7 @@ QRect MainWindow::CreatRect()
         if (m_bgmPlayer) m_bgmPlayer->stop();
         if (m_gameoverPlayer) m_gameoverPlayer->play();
         update();
-        return QRect(0, 0, 0, 0);   // 返回无效矩形
+        return QRect(0, 0, 0, 0);
     }
     return newFood;
 }
@@ -405,13 +499,13 @@ QRect MainWindow::CreatRect()
 void MainWindow::GenerateObstacles()
 {
     m_obstacles.clear();
-    int numObstacles = QRandomGenerator::global()->bounded(5, 11);
+    int numObstacles = QRandomGenerator::global()->bounded(7, 12);
     int maxAttempts = 3000;
 
     for (int i = 0; i < numObstacles && maxAttempts > 0; ) {
         maxAttempts--;
         bool horizontal = QRandomGenerator::global()->bounded(2) == 0;
-        int length = QRandomGenerator::global()->bounded(3, 9);
+        int length = QRandomGenerator::global()->bounded(5, 12);
 
         int startX = 20 + QRandomGenerator::global()->bounded(1, 45) * 10;
         int startY = 20 + QRandomGenerator::global()->bounded(1, 45) * 10;
@@ -478,8 +572,7 @@ void MainWindow::GenerateObstacles()
 // 统一的吃食物处理函数
 void MainWindow::eatFood()
 {
-    // 注意：调用本函数前，必须保证 vSnakeRect 尚未改变，food 正是被吃掉的位置
-    // 将蛇头移动到食物位置（实际上食物位置就是新蛇头）
+    m_foodMoving = false;   //
     vSnakeRect.insert(vSnakeRect.begin(), food);
     nScore += 10;
 
@@ -507,14 +600,16 @@ void MainWindow::eatFood()
 
 void MainWindow::onGameUpdate()
 {
-    if (blsover) {
-        timer->stop();
-        return;
+    if (blsover || !isStart || m_paused) return;
+
+    // 1. 记录移动前的所有蛇节位置（像素坐标）
+    m_prevPositions.clear();
+    for (const QRect &rect : vSnakeRect) {
+        m_prevPositions.append(QPointF(rect.x(), rect.y()));
     }
 
+    // 2. 执行逻辑移动（原有代码，但需要微调）
     sDisplay = " ";
-
-    // 计算新蛇头
     QRect newHead = vSnakeRect.first();
     switch (nDirection) {
     case 1: newHead.moveTop(newHead.top() - 10); break;
@@ -527,7 +622,7 @@ void MainWindow::onGameUpdate()
     bool ate = (newHead == food);
 
     if (ate) {
-        eatFood();  // 统一处理
+        eatFood();  // 使用之前统一的吃食物函数
         if (blsover) {
             update();
             return;
@@ -537,23 +632,31 @@ void MainWindow::onGameUpdate()
         vSnakeRect.pop_back();
     }
 
-    // 碰撞检测
-    QRect &head = vSnakeRect.first();
+    // 3. 记录移动后的所有蛇节位置
+    m_currPositions.clear();
+    for (const QRect &rect : vSnakeRect) {
+        m_currPositions.append(QPointF(rect.x(), rect.y()));
+    }
 
-    // 边界碰撞
-    if (head.left() < 20 || head.right() > 480 ||
-        head.top() < 20 || head.bottom() > 480) {
+    // 4. 启动动画插值
+    m_lastMoveTime = QTime::currentTime();
+    m_animProgress = 0.0f;
+    m_isMoving = true;
+
+    // 5. 碰撞检测（使用移动后的真实位置）
+    QRect &head = vSnakeRect.first();
+    if (head.left() < 20 || head.right() > 480 || head.top() < 20 || head.bottom() > 480) {
         sDisplay = "真是一条蠢蛇！";
         updateHighScore();
         blsover = true;
         if (m_foodMoveTimer) m_foodMoveTimer->stop();
         if (m_bgmPlayer) m_bgmPlayer->stop();
         if (m_gameoverPlayer) m_gameoverPlayer->play();
+        m_isMoving = false;  // 停止动画
         update();
         return;
     }
 
-    // 自身碰撞
     for (int i = 1; i < vSnakeRect.size(); ++i) {
         if (head == vSnakeRect[i]) {
             sDisplay = "不可以吃掉自己哦";
@@ -562,12 +665,12 @@ void MainWindow::onGameUpdate()
             if (m_foodMoveTimer) m_foodMoveTimer->stop();
             if (m_bgmPlayer) m_bgmPlayer->stop();
             if (m_gameoverPlayer) m_gameoverPlayer->play();
+            m_isMoving = false;
             update();
             return;
         }
     }
 
-    // 障碍物碰撞（困难模式）
     if (m_isHardMode) {
         for (const QRect &obs : m_obstacles) {
             if (head == obs) {
@@ -577,18 +680,39 @@ void MainWindow::onGameUpdate()
                 if (m_foodMoveTimer) m_foodMoveTimer->stop();
                 if (m_bgmPlayer) m_bgmPlayer->stop();
                 if (m_gameoverPlayer) m_gameoverPlayer->play();
+                m_isMoving = false;
                 update();
                 return;
             }
         }
     }
 
-    update();
+    update();  // 触发重绘，开始动画
 }
 
 void MainWindow::keyPressEvent(QKeyEvent *event)
 {
-    if (m_inWelcomeScreen || blsover)
+    // 暂停处理（游戏进行中，未结束，未在欢迎界面）
+    if (!m_inWelcomeScreen && !blsover && isStart) {
+        if (event->key() == Qt::Key_Space || event->key() == Qt::Key_P) {
+            m_paused = !m_paused;
+            if (m_paused) {
+                if (timer->isActive()) timer->stop();
+                if (m_foodMoveTimer && m_foodMoveTimer->isActive()) m_foodMoveTimer->stop();
+                if (m_animationTimer) m_animationTimer->stop();
+            } else {
+                if (!timer->isActive()) timer->start(speed);
+                if (m_foodMoveEnabled && m_foodMoveTimer && !m_foodMoveTimer->isActive())
+                    m_foodMoveTimer->start(m_foodMoveInterval);
+                if (m_animationTimer) m_animationTimer->start(16);
+            }
+            update();
+            return;
+        }
+    }
+
+    // 欢迎界面、游戏结束、暂停时不允许改变方向
+    if (m_inWelcomeScreen || blsover || m_paused)
         return;
 
     int newDir = 0;
@@ -600,16 +724,15 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
     default: return;
     }
 
-    if (!isStart) return;
-
-    // 防止反向
-    if ((nDirection == 1 && newDir == 2) ||
-        (nDirection == 2 && newDir == 1) ||
-        (nDirection == 3 && newDir == 4) ||
-        (nDirection == 4 && newDir == 3)) {
-        return;
+    if (isStart) {
+        if ((nDirection == 1 && newDir == 2) ||
+            (nDirection == 2 && newDir == 1) ||
+            (nDirection == 3 && newDir == 4) ||
+            (nDirection == 4 && newDir == 3)) {
+            return;
+        }
+        nDirection = newDir;
     }
-    nDirection = newDir;
 }
 
 void MainWindow::updateHighScore()
@@ -661,12 +784,66 @@ void MainWindow::moveFood()
 
     if (!candidates.isEmpty()) {
         int idx = QRandomGenerator::global()->bounded(candidates.size());
-        food = candidates[idx];
+        QRect newFoodRect = candidates[idx];
+
+        // 记录动画数据
+        m_foodPrevPos = QPointF(oldFood.x(), oldFood.y());
+        m_foodCurrPos = QPointF(newFoodRect.x(), newFoodRect.y());
+        m_foodMoving = true;
+        m_foodAnimProgress = 0.0f;
+        m_foodMoveStartTime = QTime::currentTime();
+
+        // 更新逻辑位置（碰撞检测使用此位置）
+        food = newFoodRect;
         update();
 
-        // 如果蛇头在食物移动后的位置，立即吃掉
+        // 如果移动后蛇头恰好在食物上，立即吃掉（保留原有逻辑）
         if (vSnakeRect.first() == food) {
-            eatFood();   // 统一处理
+            eatFood();
         }
     }
+}
+
+QPointF MainWindow::getAnimatedPosition(int index) const
+{
+    if (!m_isMoving || m_prevPositions.isEmpty() || m_currPositions.isEmpty() || index >= m_prevPositions.size()) {
+        if (index < vSnakeRect.size())
+            return QPointF(vSnakeRect[index].x(), vSnakeRect[index].y());
+        return QPointF();
+    }
+    float t = qMin(1.0f, m_animProgress);
+    QPointF prev = m_prevPositions[index];
+    QPointF curr = m_currPositions[index];
+    return prev + (curr - prev) * t;
+}
+
+void MainWindow::updateAnimation()
+{
+    // 蛇移动动画更新（如果已实现）
+    if (m_isMoving) {
+        int elapsed = m_lastMoveTime.msecsTo(QTime::currentTime());
+        float totalTime = float(speed);
+        m_animProgress = elapsed / totalTime;
+        if (m_animProgress >= 1.0f) {
+            m_animProgress = 1.0f;
+            m_isMoving = false;
+        }
+        update();
+    }
+
+    // 食物移动动画更新
+    if (m_foodMoving) {
+        int elapsed = m_foodMoveStartTime.msecsTo(QTime::currentTime());
+        float totalTime = float(m_foodMoveInterval);
+        m_foodAnimProgress = qMin(1.0f, elapsed / totalTime);
+        if (m_foodAnimProgress >= 1.0f) {
+            m_foodMoving = false;
+        }
+        update();
+    }
+
+    // 更新食物闪烁相位（原有代码）
+    m_flashPhase += 0.15;
+    if (m_flashPhase > 2 * M_PI)
+        m_flashPhase -= 2 * M_PI;
 }
