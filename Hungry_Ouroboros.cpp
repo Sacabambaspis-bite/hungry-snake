@@ -776,6 +776,10 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
             update();
             return;
         }
+        if (event->key() == Qt::Key_Escape) {
+            exitToMenu();
+            return;
+        }
     }
 
     // 欢迎界面、游戏结束、暂停时不允许改变方向
@@ -1022,3 +1026,30 @@ void MainWindow::addStarEffect(const QPointF &pos)
     }
 }
 
+void MainWindow::exitToMenu()
+{
+    // 停止所有计时器
+    if (timer && timer->isActive()) timer->stop();
+    if (m_foodMoveTimer && m_foodMoveTimer->isActive()) m_foodMoveTimer->stop();
+    if (m_animationTimer && m_animationTimer->isActive()) m_animationTimer->stop();
+
+    // 清除动画和特效状态
+    m_warpAnimActive = false;
+    m_foodMoving = false;
+    m_snakeFlashing = false;
+    m_stars.clear();
+
+    // 重置游戏全局标志
+    blsrun = false;
+    blsover = false;
+    isStart = false;
+    m_paused = false;
+    m_inWelcomeScreen = true;   // 回到欢迎界面
+
+    // 停止背景音乐
+    if (m_bgmPlayer && m_bgmPlayer->playbackState() == QMediaPlayer::PlayingState)
+        m_bgmPlayer->stop();
+
+    // 强制刷新界面
+    update();
+}

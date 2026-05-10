@@ -126,6 +126,7 @@ private:
     void StartGame();
     void updateHighScore();
     QPointF getAnimatedPosition(int index) const;
+    void exitToMenu();
 };
 
 #endif // HUNGRY_OUROBOROS_H
