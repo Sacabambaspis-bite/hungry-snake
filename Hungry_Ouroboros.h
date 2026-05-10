@@ -67,6 +67,13 @@ private:
     QPointF m_foodCurrPos;
     float m_foodAnimProgress;
     QTime m_foodMoveStartTime;
+    // 食物穿墙动画
+    bool m_warpAnimActive;
+    float m_warpAnimProgress;
+    QPointF m_warpStartPos;
+    QPointF m_warpEndPos;
+    QTime m_warpAnimStartTime;
+    float m_warpDuration;
 
     // 音效
     QMediaPlayer *m_eatPlayer;
@@ -93,6 +100,24 @@ private:
     bool m_foodMoveEnabled;
     QTimer *m_foodMoveTimer;
     int m_foodMoveInterval;
+    float m_warpProbability;
+    bool m_lastMoveWasWarp;
+
+    // 闪烁特效
+    bool m_snakeFlashing;            // 是否正在闪烁
+    int m_flashCounter;              // 闪烁计数器（用于控制闪烁次数）
+    float m_flashIntensity;          // 当前透明度/亮度（0~1）
+
+    // 小星星粒子
+    struct StarParticle {
+        QPointF pos;
+        QPointF vel;
+        float life;
+        float size;
+        QColor color;
+    };
+    QVector<StarParticle> m_stars;
+    void addStarEffect(const QPointF &pos);   // 添加一组星星
 
     void InitSnake();
     QRect CreatRect();
@@ -100,7 +125,7 @@ private:
     void eatFood();
     void StartGame();
     void updateHighScore();
-    QPointF getAnimatedPosition(int index) const;   // 获取插值后的坐标
+    QPointF getAnimatedPosition(int index) const;
 };
 
 #endif // HUNGRY_OUROBOROS_H

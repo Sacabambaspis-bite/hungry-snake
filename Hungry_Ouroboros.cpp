@@ -30,6 +30,10 @@ MainWindow::MainWindow(QWidget *parent)
     , m_flashPhase(0.0)
     , m_foodMoving(false)
     , m_foodAnimProgress(0.0f)
+    , m_warpProbability(0.8f)
+    , m_warpAnimActive(false)
+    , m_warpAnimProgress(0.0f)
+    , m_warpDuration(300.0f)
 {
     ui->setupUi(this);
     this->setGeometry(QRect(500, 250, 500, 520));
@@ -163,9 +167,6 @@ void MainWindow::paintEvent(QPaintEvent *event)
     painter.drawRect(20, 20, 460, 460);
     painter.drawPixmap(20, 20, 460, 460, QPixmap(":/myImages/bg.png"));
 
-    // 网格线
-
-
     // 网格线（仅普通模式显示）
     if (!m_isHardMode) {
         painter.setPen(Qt::darkGray);
@@ -187,12 +188,12 @@ void MainWindow::paintEvent(QPaintEvent *event)
             painter.drawRoundedRect(obs, 3, 3);
         }
     }
-
-    // 蛇和食物
     painter.setPen(Qt::lightGray);
-    painter.setBrush(Qt::white);
+    painter.save();
+    if (m_snakeFlashing) {
+        painter.setOpacity(m_flashIntensity);
+    }
     // 绘制蛇身（白色渐变）
-    painter.setPen(Qt::lightGray);
     for (int i = 1; i < vSnakeRect.size(); ++i) {
         QPointF pos = getAnimatedPosition(i);
         QRect rect(pos.x(), pos.y(), 10, 10);
@@ -219,23 +220,69 @@ void MainWindow::paintEvent(QPaintEvent *event)
         painter.drawEllipse(headRect.x() + 2, headRect.y() + 2, 3, 3);
         painter.drawEllipse(headRect.x() + 6, headRect.y() + 2, 3, 3);
     }
-
-    // 食物绘制
-    // 计算当前要绘制的位置（插值或逻辑位置）
-    QPointF drawPos;
-    if (m_foodMoving) {
-        float t = m_foodAnimProgress;
-        drawPos = m_foodPrevPos + (m_foodCurrPos - m_foodPrevPos) * t;
-    } else {
-        drawPos = QPointF(food.x(), food.y());
-    }
-
-    // 食物闪烁效果（原有的透明度计算）
-    painter.save();
-    double opacity = 0.7 + 0.3 * (1.0 + sin(m_flashPhase)) / 2.0;
-    painter.setOpacity(opacity);
-    painter.drawPixmap(QRect(drawPos.x(), drawPos.y(), 10, 10), QPixmap(":/myImages/fd.png"));
     painter.restore();
+
+    // 食物绘制（支持穿墙动画、普通移动、静态）
+    if (m_warpAnimActive) {
+        float t = m_warpAnimProgress;
+        float scale = 1.0f;
+        float alpha = 1.0f;
+        QPointF drawPos;
+
+        if (t <= 0.5f) {
+            // 前半段：在起始位置缩小并淡出
+            float subT = t * 2.0f;
+            scale = 1.0f - subT * 0.8f;
+            alpha = 1.0f - subT;
+            drawPos = m_warpStartPos;
+        } else {
+            // 后半段：在结束位置放大并淡入
+            float subT = (t - 0.5f) * 2.0f;
+            scale = 0.2f + subT * 0.8f;
+            alpha = subT;
+            drawPos = m_warpEndPos;
+        }
+
+        int w = int(10 * scale);
+        int h = int(10 * scale);
+        QRect scaledRect(drawPos.x() + (10 - w)/2, drawPos.y() + (10 - h)/2, w, h);
+
+        painter.save();
+        painter.setOpacity(alpha);
+        painter.drawPixmap(scaledRect, QPixmap(":/myImages/fd.png"));
+        painter.restore();
+    }
+    else if (m_foodMoving) {
+        // 普通平滑移动：插值位置，正常大小，闪烁效果
+        float t = m_foodAnimProgress;
+        QPointF drawPos = m_foodPrevPos + (m_foodCurrPos - m_foodPrevPos) * t;
+        QRect drawRect(drawPos.x(), drawPos.y(), 10, 10);
+        painter.save();
+        double opacity = 0.5 + 0.5 * (1.0 + sin(m_flashPhase)) / 2.0;
+        painter.setOpacity(opacity);
+        painter.drawPixmap(drawRect, QPixmap(":/myImages/fd.png"));
+        painter.restore();
+    }
+    else {
+        // 静止状态：正常绘制，带闪烁
+        painter.save();
+        double opacity = 0.7 + 0.3 * (1.0 + sin(m_flashPhase)) / 2.0;
+        painter.setOpacity(opacity);
+        painter.drawPixmap(QRect(food.x(), food.y(), 10, 10), QPixmap(":/myImages/fd.png"));
+        painter.restore();
+    }
+    // 绘制星星粒子
+
+        for (const StarParticle &p : m_stars) {
+            painter.save();
+            painter.setPen(Qt::NoPen);
+            QColor starColor = p.color;
+            starColor.setAlpha(int(p.life * 255));
+            painter.setBrush(starColor);
+            QRectF rect(p.pos.x() - p.size/2, p.pos.y() - p.size/2, p.size, p.size);
+            painter.drawEllipse(rect);
+            painter.restore();
+        }
 
     // 暂停文字
     if (m_paused && !blsover && !m_inWelcomeScreen) {
@@ -368,6 +415,10 @@ void MainWindow::mousePressEvent(QMouseEvent *event)
             return;
         } else if (m_backToMenuBtnRect.contains(clickPos)) {
             // 返回主菜单：清理食物移动计时器
+            m_warpAnimActive = false;
+            m_foodMoving = false;
+            m_snakeFlashing = false;
+            m_stars.clear();
             if (m_foodMoveTimer) {
                 m_foodMoveTimer->stop();
                 delete m_foodMoveTimer;
@@ -394,6 +445,11 @@ void MainWindow::StartGame()
     m_foodMoving = false;
     m_inWelcomeScreen = false;
     m_paused = false;
+    m_lastMoveWasWarp = false;
+    m_warpAnimActive = false;
+    m_foodMoving = false;
+    m_snakeFlashing = false;
+    m_stars.clear();
     InitSnake();
     isStart = true;
     nDirection = 2;
@@ -409,7 +465,7 @@ void MainWindow::StartGame()
         m_foodMoveInterval = 600;
     }
 
-    // 创建食物移动计时器（两种模式都启用移动）
+    // 创建食物移动计时器
     if (m_foodMoveTimer) {
         m_foodMoveTimer->stop();
         delete m_foodMoveTimer;
@@ -420,16 +476,22 @@ void MainWindow::StartGame()
     connect(m_foodMoveTimer, &QTimer::timeout, this, &MainWindow::moveFood);
     m_foodMoveTimer->start(m_foodMoveInterval);
 
+    // ========== 关键修复：确保动画计时器运行 ==========
+    if (m_animationTimer && !m_animationTimer->isActive()) {
+        m_animationTimer->start(16);
+    }
+
     if (m_bgmPlayer) m_bgmPlayer->play();
     update();
 }
-
 void MainWindow::InitSnake()
 {
     blsrun = true;
     blsover = false;
     isStart = false;
     m_paused = false;
+    m_snakeFlashing = false;
+    m_stars.clear();
     nDirection = 2;
     sDisplay = "游戏开始";
     ScoreLabel = "得分：";
@@ -572,7 +634,8 @@ void MainWindow::GenerateObstacles()
 // 统一的吃食物处理函数
 void MainWindow::eatFood()
 {
-    m_foodMoving = false;   //
+    m_foodMoving = false;
+    m_lastMoveWasWarp = false;
     vSnakeRect.insert(vSnakeRect.begin(), food);
     nScore += 10;
 
@@ -596,6 +659,9 @@ void MainWindow::eatFood()
 
     // 生成新食物
     food = CreatRect();
+    m_snakeFlashing = true;
+    m_flashCounter = 0;
+    m_flashIntensity = 1.0f;
 }
 
 void MainWindow::onGameUpdate()
@@ -622,7 +688,8 @@ void MainWindow::onGameUpdate()
     bool ate = (newHead == food);
 
     if (ate) {
-        eatFood();  // 使用之前统一的吃食物函数
+        addStarEffect(QPointF(food.x(), food.y()));
+        eatFood();
         if (blsover) {
             update();
             return;
@@ -757,10 +824,6 @@ void MainWindow::moveFood()
 
     QRect oldFood = food;
     QVector<QRect> candidates;
-    QRect up(oldFood.left(), oldFood.top() - 10, 10, 10);
-    QRect down(oldFood.left(), oldFood.top() + 10, 10, 10);
-    QRect left(oldFood.left() - 10, oldFood.top(), 10, 10);
-    QRect right(oldFood.left() + 10, oldFood.top(), 10, 10);
 
     auto isLegalPosition = [&](const QRect &rect) -> bool {
         if (rect.left() < 20 || rect.right() > 480 ||
@@ -777,27 +840,71 @@ void MainWindow::moveFood()
         return true;
     };
 
-    if (isLegalPosition(up))    candidates.append(up);
-    if (isLegalPosition(down))  candidates.append(down);
-    if (isLegalPosition(left))  candidates.append(left);
-    if (isLegalPosition(right)) candidates.append(right);
+    // 四个候选位置
+    QRect up(oldFood.left(), oldFood.top() - 10, 10, 10);
+    QRect down(oldFood.left(), oldFood.top() + 10, 10, 10);
+    QRect left(oldFood.left() - 10, oldFood.top(), 10, 10);
+    QRect right(oldFood.left() + 10, oldFood.top(), 10, 10);
+
+    // 方向处理函数（带防连续穿墙）
+    auto tryDirection = [&](const QRect &target) {
+        bool outOfBounds = (target.left() < 20 || target.right() > 480 ||
+                            target.top() < 20 || target.bottom() > 480);
+        if (outOfBounds) {
+            // 如果上一次移动是穿墙，本次禁止穿墙，避免弹回
+            if (m_lastMoveWasWarp) return;
+            float r = QRandomGenerator::global()->generateDouble();
+            if (r < m_warpProbability) {
+                QRect warped = target;
+                if (target.left() < 20)      warped.moveLeft(470);
+                else if (target.right() > 480) warped.moveLeft(20);
+                if (target.top() < 20)       warped.moveTop(470);
+                else if (target.bottom() > 480) warped.moveTop(20);
+                if (isLegalPosition(warped))
+                    candidates.append(warped);
+            }
+        } else {
+            if (isLegalPosition(target))
+                candidates.append(target);
+        }
+    };
+
+    tryDirection(up);
+    tryDirection(down);
+    tryDirection(left);
+    tryDirection(right);
 
     if (!candidates.isEmpty()) {
         int idx = QRandomGenerator::global()->bounded(candidates.size());
         QRect newFoodRect = candidates[idx];
 
-        // 记录动画数据
-        m_foodPrevPos = QPointF(oldFood.x(), oldFood.y());
-        m_foodCurrPos = QPointF(newFoodRect.x(), newFoodRect.y());
-        m_foodMoving = true;
-        m_foodAnimProgress = 0.0f;
-        m_foodMoveStartTime = QTime::currentTime();
+        // 判断是否为穿墙移动（曼哈顿距离 > 10）
+        bool isWarp = (std::abs(newFoodRect.x() - oldFood.x()) > 10) ||
+                      (std::abs(newFoodRect.y() - oldFood.y()) > 10);
 
-        // 更新逻辑位置（碰撞检测使用此位置）
-        food = newFoodRect;
+        if (isWarp) {
+            // 启动穿墙动画（缩放+淡入淡出）
+            m_warpStartPos = QPointF(oldFood.x(), oldFood.y());
+            m_warpEndPos   = QPointF(newFoodRect.x(), newFoodRect.y());
+            m_warpAnimActive = true;
+            m_warpAnimProgress = 0.0f;
+            m_warpAnimStartTime = QTime::currentTime();
+            // 逻辑位置立即更新（用于碰撞检测）
+            food = newFoodRect;
+            m_lastMoveWasWarp = true;
+            m_foodMoving = false;   // 禁止普通平滑移动
+        } else {
+            // 普通移动：原有平滑动画
+            m_foodPrevPos = QPointF(oldFood.x(), oldFood.y());
+            m_foodCurrPos = QPointF(newFoodRect.x(), newFoodRect.y());
+            m_foodMoving = true;
+            m_foodAnimProgress = 0.0f;
+            m_foodMoveStartTime = QTime::currentTime();
+            food = newFoodRect;
+            m_lastMoveWasWarp = false;
+        }
         update();
 
-        // 如果移动后蛇头恰好在食物上，立即吃掉（保留原有逻辑）
         if (vSnakeRect.first() == food) {
             eatFood();
         }
@@ -830,7 +937,15 @@ void MainWindow::updateAnimation()
         }
         update();
     }
-
+    // 食物穿墙动画
+    if (m_warpAnimActive) {
+        int elapsed = m_warpAnimStartTime.msecsTo(QTime::currentTime());
+        m_warpAnimProgress = qMin(1.0f, elapsed / m_warpDuration);
+        if (m_warpAnimProgress >= 1.0f) {
+            m_warpAnimActive = false;
+        }
+        update();
+    }
     // 食物移动动画更新
     if (m_foodMoving) {
         int elapsed = m_foodMoveStartTime.msecsTo(QTime::currentTime());
@@ -842,8 +957,68 @@ void MainWindow::updateAnimation()
         update();
     }
 
-    // 更新食物闪烁相位（原有代码）
-    m_flashPhase += 0.15;
+    // 更新食物闪烁相位
+    m_flashPhase += 0.075;
     if (m_flashPhase > 2 * M_PI)
         m_flashPhase -= 2 * M_PI;
+
+    // 更新星星粒子
+    static const float LIFE_DECAY = 0.02f; // 每帧减少0.02生命周期，约0.8秒消失（按60fps）
+    for (int i = m_stars.size()-1; i >= 0; --i) {
+        StarParticle &p = m_stars[i];
+        p.pos += p.vel;
+        p.life -= LIFE_DECAY;
+        if (p.life <= 0.0f || p.pos.x() < 0 || p.pos.x() > 500 || p.pos.y() < 0 || p.pos.y() > 520) {
+            m_stars.removeAt(i);
+        }
+    }
+
+    // 更新蛇闪烁
+    if (m_snakeFlashing) {
+        // 每帧亮暗交替，共闪烁2次（即4个半周期）
+        // 闪烁频率：每3帧切换一次状态，快速闪烁
+        static int frame = 0;
+        frame++;
+        if (frame % 3 == 0) { // 大约每 48ms 切换一次
+            m_flashCounter++;
+            if (m_flashCounter >= 8) { // 8次变化 = 4次完整周期（亮-暗-亮-暗-亮）
+                m_snakeFlashing = false;
+                m_flashIntensity = 1.0f;
+            } else {
+                // 交替强度：0.4 暗，1.0 亮
+                m_flashIntensity = (m_flashCounter % 2 == 0) ? 1.0f : 0.4f;
+            }
+        }
+        update();
+    }
 }
+
+void MainWindow::addStarEffect(const QPointF &pos)
+{
+    int numStars = QRandomGenerator::global()->bounded(8, 13);
+    for (int i = 0; i < numStars; ++i) {
+        StarParticle p;
+        p.pos = pos + QPointF(5, 5);
+        float angle = QRandomGenerator::global()->bounded(360) * M_PI / 180.0;
+        float speed = QRandomGenerator::global()->bounded(30, 100) / 10.0;
+        p.vel = QPointF(cos(angle) * speed, sin(angle) * speed);
+        p.life = 1.0f;
+        p.size = QRandomGenerator::global()->bounded(3, 7);
+
+        // 随机生成鲜艳颜色（偏向暖色，也可增加冷色）
+        int colorType = QRandomGenerator::global()->bounded(4);
+        switch (colorType) {
+        case 0: p.color = QColor(255, 255, 100); break; // 亮黄色
+        case 1: p.color = QColor(255, 200, 50); break;  // 橙色
+        case 2: p.color = QColor(255, 120, 80); break;  // 橙红
+        case 3: p.color = QColor(255, 80, 80); break;   // 红色
+        }
+        // 可选：加入淡绿或淡青
+        if (QRandomGenerator::global()->bounded(100) < 20) {
+            p.color = QColor(100, 255, 150); // 20%概率绿色
+        }
+
+        m_stars.append(p);
+    }
+}
+
